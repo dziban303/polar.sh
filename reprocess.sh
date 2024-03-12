@@ -2,9 +2,8 @@
 # shellcheck disable=SC2016
 
 # Usage
-# ./polar.sh 120 5 - Run for 120 minutes, polling every 5 seconds
-# First you have to set your hwt and url below for your Hey What's That location
-# and the URL to either the readsb netapi port, or aircraft.json from tar1090
+# ./reprocess.sh polarheatmap-##########
+# This just takes a saved file and runs gnuplot on it all
 
 # Supporting programs needed: apt-get install mawk gnuplot curl jq
 
@@ -115,131 +114,10 @@ else
 	done
 fi
 
-#Build the world / airports data.
-world=$PWD/world_10m.txt
-
-if [ ! -f "$world" ]; then
-
-	wget https://raw.githubusercontent.com/caiusseverus/adsbcompare/master/world_10m.txt
-	#cp borders_10m.txt world_10m.txt
-
-	mawk -v rlat="$lat" -v rlon="$lon" 'function data(lat1,lon1,lat2,lon2,  a,c,dlat,dlon,x,t,y) {
-    dlat = radians(lat2-lat1)
-    dlon = radians(lon2-lon1)
-    lat1 = radians(lat1)
-    lat2 = radians(lat2)
-    a = (sin(dlat/2))^2 + cos(lat1) * cos(lat2) * (sin(dlon/2))^2
-    c = 2 * atan2(sqrt(a),sqrt(1-a))
-    d = 6371000 * c
-    t = atan2(sin(dlon * cos(lat2)), cos(lat1)*sin(lat2)-sin(lat1)*cos(lat2)*cos(dlon))
-    phi = (t * (180 / 3.1415926) + 360) % 360
-    x = d*cos(radians(-phi)+radians(90))
-    y = d*sin(radians(-phi)+radians(90))
-    printf("%f,%f,%f,%f,%0.0f\n",lon2,lat2 * (180 / 3.1415926),x,y,d)
-        }
-    function radians(degree) { # degrees to radians
-    return degree * (3.1415926 / 180.)}
-        {data(rlat,rlon,$2,$1)}' world_10m.txt > tmp && mv tmp world_10m.txt
-
-	mawk -F "," '!($5 > (350*1852)) || ($1 == 0)' world_10m.txt > tmp && mv tmp world_10m.txt
-	sed -i '/^$/d' world_10m.txt
-	sed -i -e 's/^0.000000.*$//' world_10m.txt
-	sed -i -e :a -e '/./,$!d;/^\n*$/{$d;N;};/\n$/ba' world_10m.txt
-	sed -i 'N;/^\n$/D;P;D;' world_10m.txt
-
-fi
-
-ap=$PWD/airports.csv
-
-if [ ! -f "$ap" ]; then
-
-	curl https://davidmegginson.github.io/ourairports-data/airports.csv | cut -d "," -f2,3,5,6,7,14 | tr -d '"' >"$PWD"/airports.csv
-
-	sed -i '1d' "$PWD"/airports.csv
-
-	mawk -F "," -v rlat="$lat" -v rlon="$lon" 'function data(lat1,lon1,lat2,lon2,  a,c,dlat,dlon,x,t,y) {
-    dlat = radians(lat2-lat1)
-    dlon = radians(lon2-lon1)
-    lat1 = radians(lat1)
-    lat2 = radians(lat2)
-    a = (sin(dlat/2))^2 + cos(lat1) * cos(lat2) * (sin(dlon/2))^2
-    c = 2 * atan2(sqrt(a),sqrt(1-a))
-    d = 6371000 * c
-    t = atan2(sin(dlon * cos(lat2)), cos(lat1)*sin(lat2)-sin(lat1)*cos(lat2)*cos(dlon))
-    phi = (t * (180 / 3.1415926) + 360) % 360
-    x = d*cos(radians(-phi)+radians(90))
-    y = d*sin(radians(-phi)+radians(90))
-    printf("%s,%s,%f,%f,%.0f,%s,%.0f,%0.2f,%.0f,%.0f\n",$1,$2,$3,$4,$5,$6,d,phi,x,y)
-        }
-    function radians(degree) { # degrees to radians
-    return degree * (3.1415926 / 180.)}
-        {data(rlat,rlon,$3,$4)}' airports.csv > tmp && mv tmp airports.csv
-
-	mawk -F "," '!($7 > (350*1852))' airports.csv > tmp && mv tmp airports.csv
-
-fi
-
-
-
-if [[ $mlat == "yes" ]]; then
-	echo "ADS-B and MLAT aircraft will be plotted"
-elif [[ $mlat == "no" ]]; then
-	echo "ADS-B aircraft only will be plotted"
-elif [[ $mlat == "mlat" ]]; then
-	echo "MLAT aircraft only will be plotted"
-fi
-
-secs=$(($1 * 60))
-end=$(date --date=now+"${1}"mins)
-echo "Gathering data every $2 seconds until $end"
-
-SECONDS=0
-while ((SECONDS < secs)); do
-	if [[ $mlat == "yes" ]]; then
-		curl -sS "$url" | jq -r '.aircraft | .[] | select(.seen_pos !=null) | select(.seen_pos <="10") | select(.rssi != -49.5) | select( (has("tisb") | not) or (.tisb | contains(["lat"]) | not) ) | [.lon,.lat,.rssi,.alt_baro] | @csv' >>"$wdir"/heatmap
-	elif [[ $mlat == "no" ]]; then
-		curl -sS "$url" | jq -r '.aircraft | .[] | select(.seen_pos !=null) | select(.seen_pos <="10") | select(.rssi != -49.5) | select( (has("tisb") | not) or (.tisb | contains(["lat"]) | not) ) | select(any(.mlat[] ; .) | not) | [.lon,.lat,.rssi,.alt_baro] | @csv' >>"$wdir"/heatmap
-	elif [[ $mlat == "mlat" ]]; then
-		curl -sS "$url" | jq -r '.aircraft | .[] | select(.seen_pos !=null) | select(.seen_pos <="10") | select(.rssi != -49.5) | select( (has("tisb") | not) or (.tisb | contains(["lat"]) | not) ) | select(any(.mlat[] ; .)) | [.lon,.lat,.rssi,.alt_baro] | @csv' >>"$wdir"/heatmap
-	fi
-	sleep "$2"
-done
-
-count=$(wc -l <"$wdir"/heatmap)
-echo "Number of data points collected: $count"
-echo "Calculating Range, Azimuth and Elevation data:"
-mawk -F "," -v rlat="$lat" -v rlon="$lon" -v rh="$rh" \
-'{
-        data(rlat, rlon, rh, $2, $1, $4, $3)
-}
-
-function data(lat1, lon1, elev1, lat2, lon2, elev2, rssi, lamda, a, c, dlat, dlon, x)
-{
-        if (elev2 == "ground") {
-                elev2 = 0
-        }
-        dlat = radians(lat2 - lat1)
-        dlon = radians(lon2 - lon1)
-        lat1 = radians(lat1)
-        lat2 = radians(lat2)
-        elev2 = elev2 / 3.28
-        a = (sin(dlat / 2)) ^ 2 + cos(lat1) * cos(lat2) * (sin(dlon / 2)) ^ 2
-        c = 2 * atan2(sqrt(a), sqrt(1 - a))
-        d = 6371000 * c
-        x = atan2(sin(dlon * cos(lat2)), cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dlon))
-        phi = (x * (180 / 3.1415926) + 360) % 360
-        lamda = (180 / 3.1415926) * atan2((elev2 - elev1) / d - d / (2 * 6371000), 1)
-        printf "%f,%f,%.1f,%.0f,%.0f,%f,%f\n", lon2, lat2 * (180 / 3.1415926), rssi, elev2 * 3.28, d, phi, lamda
-}
-
-function radians(degree)
-{
-        # degrees to radians
-        return (degree * (3.1415926 / 180.))
-}' "$wdir"/heatmap >"$wdir"/tmp && mv "$wdir"/tmp "$wdir"/heatmap
+echo "made it this far"
 
 # Copy heatmap to HD at this point
-cp "$wdir"/heatmap "$PWD"/polarheatmap-"$(date +%s)"
+cp $1 "$wdir"/heatmap 
 
 echo "Filtering altitudes"
 mawk -v low="$low" -F "," '$4 <= low' "$wdir"/heatmap >"$wdir"/heatmap_low

@@ -3,3 +3,5 @@
 *.json
 *.svg
 polarheatmap*
+airports.csv
+world_10m.txt
