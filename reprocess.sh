@@ -10,8 +10,6 @@
 #Set heywhatsthat.com site ID here
 source .env
 hwt=$FEEDER_HEYWHATSTHAT_ID
-url='http://10.0.1.11:30152?all_with_pos'
-#url='http://127.0.0.1:8080/data/aircraft.json'
 
 #Set altitude limits
 low=5000
